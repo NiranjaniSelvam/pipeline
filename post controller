@@ -1,0 +1,40 @@
+// controllers/postController.js
+const asyncHandler = require('express-async-handler');
+const Post = require('../models/Post');
+const User = require('../models/User');
+const { setCache, getCache, deleteCache, clearCache } = require('../config/database');
+const { uploadToCloudinary } = require('../utils/cloudinary');
+
+// @desc    Get all posts
+// @route   GET /api/posts
+// @access  Public
+const getPosts = asyncHandler(async (req, res) => {
+  const {
+    page = 1,
+    limit = 10,
+    status,
+    category,
+    tag,
+    author,
+    search,
+    sortBy = '-createdAt'
+  } = req.query;
+
+  // Build query
+  let query = {};
+  
+  // If user is not authenticated or not admin/editor, only show published posts
+  if (!req.user || !['admin', 'editor'].includes(req.user.role)) {
+    query.status = 'published';
+    query.publishedAt = { $lte: new Date() };
+  } else if (status) {
+    query.status = status;
+  }
+
+  if (category) query.categories = { $in: [category] };
+  if (tag) query.tags = { $in: [tag] };
+  if (author) query.author = author;
+  if (search) {
+    query.$or = [
+      { title: { $regex: search, $options: 'i' } },
+      { content: { $regex: search
