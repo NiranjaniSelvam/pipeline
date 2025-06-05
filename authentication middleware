@@ -1,0 +1,182 @@
+// middleware/auth.js
+const jwt = require('jsonwebtoken');
+const asyncHandler = require('express-async-handler');
+const User = require('../models/User');
+const { getCache } = require('../config/database');
+
+// Protect routes - verify JWT token
+const protect = asyncHandler(async (req, res, next) => {
+  let token;
+
+  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+    try {
+      // Get token from header
+      token = req.headers.authorization.split(' ')[1];
+
+      // Verify token
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+      // Check cache first for better performance
+      let userData = await getCache(`user_session_${decoded.id}`);
+      
+      if (!userData) {
+        // Get user from database if not in cache
+        const user = await User.findById(decoded.id).select('-password');
+        
+        if (!user) {
+          res.status(401);
+          throw new Error('Not authorized - user not found');
+        }
+
+        if (!user.isActive) {
+          res.status(401);
+          throw new Error('Account has been deactivated');
+        }
+
+        userData = {
+          id: user._id,
+          username: user.username,
+          email: user.email,
+          role: user.role,
+          emailVerified: user.emailVerified
+        };
+      }
+
+      req.user = userData;
+      next();
+    } catch (error) {
+      console.error('Auth error:', error);
+      res.status(401);
+      throw new Error('Not authorized - invalid token');
+    }
+  }
+
+  if (!token) {
+    res.status(401);
+    throw new Error('Not authorized - no token provided');
+  }
+});
+
+// Admin access middleware
+const admin = (req, res, next) => {
+  if (req.user && req.user.role === 'admin') {
+    next();
+  } else {
+    res.status(403);
+    throw new Error('Access denied - admin role required');
+  }
+};
+
+// Editor or above access middleware
+const editor = (req, res, next) => {
+  if (req.user && (req.user.role === 'admin' || req.user.role === 'editor')) {
+    next();
+  } else {
+    res.status(403);
+    throw new Error('Access denied - editor role or above required');
+  }
+};
+
+// Author or above access middleware
+const author = (req, res, next) => {
+  if (req.user && ['admin', 'editor', 'author'].includes(req.user.role)) {
+    next();
+  } else {
+    res.status(403);
+    throw new Error('Access denied - author role or above required');
+  }
+};
+
+// Check if user owns resource or has admin/editor privileges
+const ownerOrEditor = asyncHandler(async (req, res, next) => {
+  const resourceUserId = req.params.userId || req.body.userId;
+  
+  if (req.user.role === 'admin' || req.user.role === 'editor' || req.user.id === resourceUserId) {
+    next();
+  } else {
+    res.status(403);
+    throw new Error('Access denied - insufficient privileges');
+  }
+});
+
+// Verify email middleware
+const verifyEmail = (req, res, next) => {
+  if (req.user && req.user.emailVerified) {
+    next();
+  } else {
+    res.status(403);
+    throw new Error('Please verify your email address to access this resource');
+  }
+};
+
+// Rate limiting by user
+const userRateLimit = (maxRequests = 100, windowMs = 15 * 60 * 1000) => {
+  const requests = new Map();
+
+  return (req, res, next) => {
+    if (!req.user) return next();
+
+    const userId = req.user.id;
+    const now = Date.now();
+    const windowStart = now - windowMs;
+
+    // Clean old entries
+    const userRequests = requests.get(userId) || [];
+    const validRequests = userRequests.filter(time => time > windowStart);
+
+    if (validRequests.length >= maxRequests) {
+      res.status(429);
+      throw new Error('Too many requests from this user');
+    }
+
+    validRequests.push(now);
+    requests.set(userId, validRequests);
+
+    next();
+  };
+};
+
+// Optional auth - doesn't fail if no token provided
+const optionalAuth = asyncHandler(async (req, res, next) => {
+  let token;
+
+  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+    try {
+      token = req.headers.authorization.split(' ')[1];
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+      let userData = await getCache(`user_session_${decoded.id}`);
+      
+      if (!userData) {
+        const user = await User.findById(decoded.id).select('-password');
+        if (user && user.isActive) {
+          userData = {
+            id: user._id,
+            username: user.username,
+            email: user.email,
+            role: user.role,
+            emailVerified: user.emailVerified
+          };
+        }
+      }
+
+      req.user = userData;
+    } catch (error) {
+      // Don't throw error, just continue without user
+      req.user = null;
+    }
+  }
+
+  next();
+});
+
+module.exports = {
+  protect,
+  admin,
+  editor,
+  author,
+  ownerOrEditor,
+  verifyEmail,
+  userRateLimit,
+  optionalAuth
+};
