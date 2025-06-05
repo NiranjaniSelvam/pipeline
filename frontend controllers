@@ -1,0 +1,397 @@
+// frontend/src/components/Header.js
+import React from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import './Header.css';
+
+const Header = () => {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
+
+  return (
+    <header className="header">
+      <div className="header-container">
+        <Link to="/" className="logo">
+          <h1>CMS Admin</h1>
+        </Link>
+        
+        <nav className="nav-menu">
+          <div className="user-info">
+            <span>Welcome, {user?.firstName || user?.username}</span>
+            <div className="user-dropdown">
+              <button className="dropdown-toggle">
+                <img 
+                  src={user?.avatar || '/default-avatar.png'} 
+                  alt="User Avatar" 
+                  className="avatar"
+                />
+              </button>
+              <div className="dropdown-menu">
+                <Link to="/profile" className="dropdown-item">Profile</Link>
+                <Link to="/settings" className="dropdown-item">Settings</Link>
+                <button onClick={handleLogout} className="dropdown-item logout-btn">
+                  Logout
+                </button>
+              </div>
+            </div>
+          </div>
+        </nav>
+      </div>
+    </header>
+  );
+};
+
+export default Header;
+
+// frontend/src/components/Sidebar.js
+import React from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import './Sidebar.css';
+
+const Sidebar = () => {
+  const { user } = useAuth();
+  const location = useLocation();
+
+  const menuItems = [
+    { path: '/', label: 'Dashboard', icon: '📊' },
+    { path: '/posts', label: 'Posts', icon: '📝' },
+    { path: '/users', label: 'Users', icon: '👥', adminOnly: true },
+    { path: '/settings', label: 'Settings', icon: '⚙️' }
+  ];
+
+  const filteredMenuItems = menuItems.filter(item => 
+    !item.adminOnly || user?.role === 'admin'
+  );
+
+  return (
+    <aside className="sidebar">
+      <nav className="sidebar-nav">
+        <ul className="nav-list">
+          {filteredMenuItems.map((item) => (
+            <li key={item.path} className="nav-item">
+              <Link 
+                to={item.path} 
+                className={`nav-link ${location.pathname === item.path ? 'active' : ''}`}
+              >
+                <span className="nav-icon">{item.icon}</span>
+                <span className="nav-label">{item.label}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </nav>
+    </aside>
+  );
+};
+
+export default Sidebar;
+
+// frontend/src/components/Dashboard.js
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import api from '../services/api';
+import './Dashboard.css';
+
+const Dashboard = () => {
+  const { user } = useAuth();
+  const [stats, setStats] = useState({
+    totalPosts: 0,
+    publishedPosts: 0,
+    draftPosts: 0,
+    totalUsers: 0
+  });
+  const [recentPosts, setRecentPosts] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, []);
+
+  const fetchDashboardData = async () => {
+    try {
+      const [statsResponse, postsResponse] = await Promise.all([
+        api.get('/dashboard/stats'),
+        api.get('/posts?limit=5')
+      ]);
+
+      setStats(statsResponse.data);
+      setRecentPosts(postsResponse.data.posts);
+    } catch (error) {
+      console.error('Error fetching dashboard data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="loading">Loading dashboard...</div>;
+  }
+
+  return (
+    <div className="dashboard">
+      <div className="dashboard-header">
+        <h1>Dashboard</h1>
+        <p>Welcome back, {user?.firstName || user?.username}!</p>
+      </div>
+
+      <div className="stats-grid">
+        <div className="stat-card">
+          <div className="stat-icon">📝</div>
+          <div className="stat-content">
+            <h3>{stats.totalPosts}</h3>
+            <p>Total Posts</p>
+          </div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-icon">🌟</div>
+          <div className="stat-content">
+            <h3>{stats.publishedPosts}</h3>
+            <p>Published</p>
+          </div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-icon">📄</div>
+          <div className="stat-content">
+            <h3>{stats.draftPosts}</h3>
+            <p>Drafts</p>
+          </div>
+        </div>
+
+        {user?.role === 'admin' && (
+          <div className="stat-card">
+            <div className="stat-icon">👥</div>
+            <div className="stat-content">
+              <h3>{stats.totalUsers}</h3>
+              <p>Total Users</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="recent-posts">
+        <h2>Recent Posts</h2>
+        <div className="posts-list">
+          {recentPosts.length > 0 ? (
+            recentPosts.map(post => (
+              <div key={post.id} className="post-item">
+                <div className="post-info">
+                  <h3>{post.title}</h3>
+                  <p>{post.excerpt}</p>
+                  <div className="post-meta">
+                    <span className={`status ${post.status}`}>{post.status}</span>
+                    <span className="date">
+                      {new Date(post.createdAt).toLocaleDateString()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            <p>No posts yet. Create your first post!</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default Dashboard;
+
+// frontend/src/components/PostEditor.js
+import React, { useState, useEffect } from 'react';
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
+import './PostEditor.css';
+
+const PostEditor = ({ post, onSave, onCancel, loading }) => {
+  const [formData, setFormData] = useState({
+    title: '',
+    content: '',
+    excerpt: '',
+    category: '',
+    tags: [],
+    status: 'draft',
+    featuredImage: ''
+  });
+
+  useEffect(() => {
+    if (post) {
+      setFormData({
+        title: post.title || '',
+        content: post.content || '',
+        excerpt: post.excerpt || '',
+        category: post.category || '',
+        tags: post.tags || [],
+        status: post.status || 'draft',
+        featuredImage: post.featuredImage || ''
+      });
+    }
+  }, [post]);
+
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
+
+  const handleContentChange = (content) => {
+    setFormData(prev => ({
+      ...prev,
+      content
+    }));
+  };
+
+  const handleTagsChange = (e) => {
+    const tags = e.target.value.split(',').map(tag => tag.trim()).filter(tag => tag);
+    setFormData(prev => ({
+      ...prev,
+      tags
+    }));
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onSave(formData);
+  };
+
+  const modules = {
+    toolbar: [
+      [{ 'header': [1, 2, 3, 4, 5, 6, false] }],
+      ['bold', 'italic', 'underline', 'strike'],
+      [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+      ['blockquote', 'code-block'],
+      ['link', 'image'],
+      ['clean']
+    ],
+  };
+
+  return (
+    <div className="post-editor">
+      <form onSubmit={handleSubmit} className="editor-form">
+        <div className="form-row">
+          <div className="form-group">
+            <label htmlFor="title">Title</label>
+            <input
+              type="text"
+              id="title"
+              name="title"
+              value={formData.title}
+              onChange={handleInputChange}
+              required
+              placeholder="Enter post title"
+            />
+          </div>
+        </div>
+
+        <div className="form-row">
+          <div className="form-group">
+            <label htmlFor="excerpt">Excerpt</label>
+            <textarea
+              id="excerpt"
+              name="excerpt"
+              value={formData.excerpt}
+              onChange={handleInputChange}
+              rows="3"
+              placeholder="Brief description of the post"
+            />
+          </div>
+        </div>
+
+        <div className="form-row">
+          <div className="form-group">
+            <label>Content</label>
+            <ReactQuill
+              value={formData.content}
+              onChange={handleContentChange}
+              modules={modules}
+              theme="snow"
+              placeholder="Write your post content here..."
+            />
+          </div>
+        </div>
+
+        <div className="form-row">
+          <div className="form-group">
+            <label htmlFor="category">Category</label>
+            <select
+              id="category"
+              name="category"
+              value={formData.category}
+              onChange={handleInputChange}
+            >
+              <option value="">Select Category</option>
+              <option value="technology">Technology</option>
+              <option value="business">Business</option>
+              <option value="lifestyle">Lifestyle</option>
+              <option value="health">Health</option>
+              <option value="education">Education</option>
+            </select>
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="status">Status</label>
+            <select
+              id="status"
+              name="status"
+              value={formData.status}
+              onChange={handleInputChange}
+            >
+              <option value="draft">Draft</option>
+              <option value="published">Published</option>
+              <option value="archived">Archived</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="form-row">
+          <div className="form-group">
+            <label htmlFor="tags">Tags</label>
+            <input
+              type="text"
+              id="tags"
+              name="tags"
+              value={formData.tags.join(', ')}
+              onChange={handleTagsChange}
+              placeholder="Enter tags separated by commas"
+            />
+          </div>
+        </div>
+
+        <div className="form-row">
+          <div className="form-group">
+            <label htmlFor="featuredImage">Featured Image URL</label>
+            <input
+              type="url"
+              id="featuredImage"
+              name="featuredImage"
+              value={formData.featuredImage}
+              onChange={handleInputChange}
+              placeholder="https://example.com/image.jpg"
+            />
+          </div>
+        </div>
+
+        <div className="form-actions">
+          <button type="button" onClick={onCancel} className="btn btn-secondary">
+            Cancel
+          </button>
+          <button type="submit" disabled={loading} className="btn btn-primary">
+            {loading ? 'Saving...' : 'Save Post'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+};
+
+export default PostEditor;
