@@ -1,0 +1,77 @@
+cms-project/
+├── frontend/                    # React.js frontend
+│   ├── public/
+│   │   ├── index.html
+│   │   └── favicon.ico
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── Header.js
+│   │   │   ├── Sidebar.js
+│   │   │   ├── PostEditor.js
+│   │   │   ├── PostList.js
+│   │   │   └── Dashboard.js
+│   │   ├── pages/
+│   │   │   ├── Login.js
+│   │   │   ├── Posts.js
+│   │   │   ├── Users.js
+│   │   │   └── Settings.js
+│   │   ├── services/
+│   │   │   └── api.js
+│   │   ├── styles/
+│   │   │   └── globals.css
+│   │   ├── App.js
+│   │   └── index.js
+│   ├── package.json
+│   └── package-lock.json
+├── backend/                     # Node.js + Express API
+│   ├── controllers/
+│   │   ├── authController.js
+│   │   ├── postController.js
+│   │   └── userController.js
+│   ├── middleware/
+│   │   ├── auth.js
+│   │   └── upload.js
+│   ├── models/
+│   │   ├── User.js
+│   │   └── Post.js
+│   ├── routes/
+│   │   ├── auth.js
+│   │   ├── posts.js
+│   │   └── users.js
+│   ├── config/
+│   │   └── database.js
+│   ├── uploads/                 # File uploads directory
+│   ├── server.js
+│   ├── package.json
+│   └── package-lock.json
+├── database/                    # Database setup
+│   ├── migrations/
+│   │   ├── 001_create_users.sql
+│   │   └── 002_create_posts.sql
+│   └── seeds/
+│       └── initial_data.sql
+├── docker/                      # Docker configuration
+│   ├── Dockerfile.frontend
+│   ├── Dockerfile.backend
+│   └── docker-compose.yml
+├── .github/                     # GitHub Actions CI/CD
+│   └── workflows/
+│       ├── ci.yml
+│       └── deploy.yml
+├── terraform/                   # Infrastructure as Code
+│   ├── main.tf
+│   ├── variables.tf
+│   └── outputs.tf
+├── scripts/                     # Deployment scripts
+│   ├── setup.sh
+│   ├── deploy.sh
+│   └── backup.sh
+├── docs/                        # Documentation
+│   ├── API.md
+│   ├── DEPLOYMENT.md
+│   └── USER_GUIDE.md
+├── .env.example
+├── .gitignore
+├── README.md
+├── docker-compose.yml
+└── package.json                 # Root package.json for scripts
