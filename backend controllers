@@ -1,0 +1,405 @@
+// backend/controllers/authController.js
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
+const { validationResult } = require('express-validator');
+
+const generateToken = (userId) => {
+  return jwt.sign({ userId }, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRES_IN || '7d'
+  });
+};
+
+exports.register = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { username, email, password, firstName, lastName } = req.body;
+
+    // Check if user already exists
+    const existingUser = await User.findOne({
+      where: {
+        [Op.or]: [{ email }, { username }]
+      }
+    });
+
+    if (existingUser) {
+      return res.status(400).json({ 
+        message: 'User with this email or username already exists' 
+      });
+    }
+
+    // Hash password
+    const saltRounds = 12;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+    // Create user
+    const user = await User.create({
+      username,
+      email,
+      password: hashedPassword,
+      firstName,
+      lastName,
+      role: 'user',
+      isActive: true
+    });
+
+    // Generate token
+    const token = generateToken(user.id);
+
+    res.status(201).json({
+      message: 'User registered successfully',
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ message: 'Server error during registration' });
+  }
+};
+
+exports.login = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { email, password } = req.body;
+
+    // Find user
+    const user = await User.findOne({ where: { email } });
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    // Check if user is active
+    if (!user.isActive) {
+      return res.status(401).json({ message: 'Account is deactivated' });
+    }
+
+    // Verify password
+    const isValidPassword = await bcrypt.compare(password, user.password);
+    if (!isValidPassword) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    // Update last login
+    await user.update({ lastLoginAt: new Date() });
+
+    // Generate token
+    const token = generateToken(user.id);
+
+    res.json({
+      message: 'Login successful',
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ message: 'Server error during login' });
+  }
+};
+
+exports.getProfile = async (req, res) => {
+  try {
+    const user = await User.findByPk(req.user.id, {
+      attributes: { exclude: ['password'] }
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.json({ user });
+  } catch (error) {
+    console.error('Get profile error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+exports.updateProfile = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { firstName, lastName, email } = req.body;
+    const user = await User.findByPk(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    await user.update({
+      firstName,
+      lastName,
+      email
+    });
+
+    res.json({
+      message: 'Profile updated successfully',
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+exports.changePassword = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { currentPassword, newPassword } = req.body;
+    const user = await User.findByPk(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Verify current password
+    const isValidPassword = await bcrypt.compare(currentPassword, user.password);
+    if (!isValidPassword) {
+      return res.status(400).json({ message: 'Current password is incorrect' });
+    }
+
+    // Hash new password
+    const saltRounds = 12;
+    const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+
+    await user.update({ password: hashedPassword });
+
+    res.json({ message: 'Password changed successfully' });
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// backend/controllers/postController.js
+const Post = require('../models/Post');
+const User = require('../models/User');
+const { validationResult } = require('express-validator');
+const { Op } = require('sequelize');
+const slugify = require('slugify');
+
+exports.getAllPosts = async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+    const search = req.query.search || '';
+    const status = req.query.status || '';
+    const category = req.query.category || '';
+
+    let whereClause = {};
+
+    if (search) {
+      whereClause[Op.or] = [
+        { title: { [Op.iLike]: `%${search}%` } },
+        { content: { [Op.iLike]: `%${search}%` } },
+        { excerpt: { [Op.iLike]: `%${search}%` } }
+      ];
+    }
+
+    if (status) {
+      whereClause.status = status;
+    }
+
+    if (category) {
+      whereClause.category = category;
+    }
+
+    const { count, rows } = await Post.findAndCountAll({
+      where: whereClause,
+      include: [{
+        model: User,
+        as: 'author',
+        attributes: ['id', 'username', 'firstName', 'lastName']
+      }],
+      order: [['createdAt', 'DESC']],
+      limit,
+      offset
+    });
+
+    const totalPages = Math.ceil(count / limit);
+
+    res.json({
+      posts: rows,
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalPosts: count,
+        hasNext: page < totalPages,
+        hasPrev: page > 1
+      }
+    });
+  } catch (error) {
+    console.error('Get posts error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+exports.getPostById = async (req, res) => {
+  try {
+    const post = await Post.findByPk(req.params.id, {
+      include: [{
+        model: User,
+        as: 'author',
+        attributes: ['id', 'username', 'firstName', 'lastName']
+      }]
+    });
+
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    res.json({ post });
+  } catch (error) {
+    console.error('Get post error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+exports.createPost = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { title, content, excerpt, category, tags, status, featuredImage } = req.body;
+
+    const slug = slugify(title, { lower: true, strict: true });
+
+    const post = await Post.create({
+      title,
+      content,
+      excerpt,
+      slug,
+      category,
+      tags: tags || [],
+      status: status || 'draft',
+      featuredImage,
+      authorId: req.user.id
+    });
+
+    const newPost = await Post.findByPk(post.id, {
+      include: [{
+        model: User,
+        as: 'author',
+        attributes: ['id', 'username', 'firstName', 'lastName']
+      }]
+    });
+
+    res.status(201).json({
+      message: 'Post created successfully',
+      post: newPost
+    });
+  } catch (error) {
+    console.error('Create post error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+exports.updatePost = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const post = await Post.findByPk(req.params.id);
+
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    // Check if user owns the post or is admin
+    if (post.authorId !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    const { title, content, excerpt, category, tags, status, featuredImage } = req.body;
+
+    const slug = title !== post.title ? slugify(title, { lower: true, strict: true }) : post.slug;
+
+    await post.update({
+      title,
+      content,
+      excerpt,
+      slug,
+      category,
+      tags: tags || [],
+      status,
+      featuredImage
+    });
+
+    const updatedPost = await Post.findByPk(post.id, {
+      include: [{
+        model: User,
+        as: 'author',
+        attributes: ['id', 'username', 'firstName', 'lastName']
+      }]
+    });
+
+    res.json({
+      message: 'Post updated successfully',
+      post: updatedPost
+    });
+  } catch (error) {
+    console.error('Update post error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+exports.deletePost = async (req, res) => {
+  try {
+    const post = await Post.findByPk(req.params.id);
+
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    // Check if user owns the post or is admin
+    if (post.authorId !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    await post.destroy();
+
+    res.json({ message: 'Post deleted successfully' });
+  } catch (error) {
+    console.error('Delete post error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
